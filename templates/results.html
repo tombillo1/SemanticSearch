@@ -6,11 +6,12 @@
   </head>
   <body>
     <div class="search-container">
-      <form action="/search" method="POST" enctype="multipart/form-data">
-        <input type="text" id="query" name="query" value="{{ query }}" placeholder="Enter your search query">
-        <input type="file" id="files" value = "{{ file }}">
-        <button class="custom-button" type="submit">Search</button>
-      </form>
+      <button class="custom-button2" onclick="goBack()">Home</button>
+      <script>
+      function goBack() {
+        window.history.back();
+      }
+      </script>
     </div>
       
     <div id="results">

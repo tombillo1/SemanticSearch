@@ -51,6 +51,7 @@ def search():
         query = request.form['query']
         files = request.files.getlist('files')
         df = pd.DataFrame(columns=['Sentence'])
+        df
 
         for file in files:
             text = extract_text(file)
