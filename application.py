@@ -6,10 +6,11 @@ nltk.download('punkt')
 from config import API_KEY
 from nltk.tokenize import sent_tokenize
 from openai.embeddings_utils import get_embedding
-from openai.embeddings_utils import cosine_similarity
 import tempfile
 import os
 import PyPDF2
+import faiss
+import numpy as np
 
 def extract_text(file):
     with tempfile.NamedTemporaryFile(delete=False) as temp:
@@ -27,7 +28,7 @@ def extract_text(file):
                 text = f.read()
     finally:
         os.remove(file_path)
-    
+
     return text
 
 openai.api_key = API_KEY
@@ -40,6 +41,20 @@ def document_to_dataframe(document):
     df = pd.DataFrame(sentences, columns=['Sentence'])
     return df
 
+def compute_embeddings(df):
+    embeddings = []
+    for sentence in df['Sentence']:
+        embedding = get_embedding(sentence, engine='text-embedding-ada-002')
+        embeddings.append(embedding)
+    df['embedding'] = embeddings
+
+def load_embeddings():
+    df = pd.read_pickle('embeddings.pkl')
+    return df
+
+def save_embeddings(df):
+    df.to_pickle('embeddings.pkl')
+
 @app.route('/')
 def index():
     results = ["Result 1", "Result 2", "Result 3"]
@@ -51,22 +66,33 @@ def search():
         query = request.form['query']
         files = request.files.getlist('files')
         df = pd.DataFrame(columns=['Sentence'])
-        df
 
         for file in files:
             text = extract_text(file)
             file_df = document_to_dataframe(text)
             df = pd.concat([df, file_df], ignore_index=True)
 
-        df['embedding'] = df['Sentence'].apply(lambda x: get_embedding(x, engine='text-embedding-ada-002'))
+        # Check if embeddings are already computed and stored
+        if os.path.exists('embeddings.pkl'):
+            df = load_embeddings()
+        else:
+            compute_embeddings(df)
+            save_embeddings(df)
 
-        earnings_search_vector = get_embedding(query, engine="text-embedding-ada-002")
+        df['embedding'] = df['embedding'].apply(lambda x: np.array(x))  # Convert embeddings to NumPy arrays
 
-        df['similarities'] = df['embedding'].apply(lambda x: cosine_similarity(x, earnings_search_vector))
-        df = df.sort_values('similarities', ascending=False)
-        top_3_items = df.head(5)
+        d = df['embedding'][0].shape[0]  # Get the dimension of the embeddings
+        index = faiss.IndexFlatL2(d)
+
+        embeddings = np.vstack(df['embedding'].to_numpy())
+        index.add(embeddings)
+
+        query_embedding = get_embedding(query, engine='text-embedding-ada-002')
+        query_embedding = np.array(query_embedding).reshape(1, -1)
+
+        _, indices = index.search(query_embedding, k=5)
+        top_3_items = df.iloc[indices[0]]
         results = top_3_items['Sentence'].tolist()
-        results = [str(element) for element in results]
 
         return render_template('results.html', query=query, results=results)
     return render_template('index.html')
