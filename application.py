@@ -3,9 +3,9 @@ import openai
 import pandas as pd
 import nltk
 nltk.download('punkt')
-from config import API_KEY
 from nltk.tokenize import sent_tokenize
 from openai.embeddings_utils import get_embedding
+from config import API_KEY
 import tempfile
 import os
 import PyPDF2
@@ -26,10 +26,11 @@ def extract_text(file):
         else:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
+
+        filename = file.filename
+        return {"text": text, "filename": filename}
     finally:
         os.remove(file_path)
-
-    return text
 
 openai.api_key = API_KEY
 
@@ -41,19 +42,22 @@ def document_to_dataframe(document):
     df = pd.DataFrame(sentences, columns=['Sentence'])
     return df
 
-def compute_embeddings(df):
-    embeddings = []
-    for sentence in df['Sentence']:
-        embedding = get_embedding(sentence, engine='text-embedding-ada-002')
-        embeddings.append(embedding)
-    df['embedding'] = embeddings
+def compute_embeddings(df, filenames):
+    for filename in filenames:
+        file_df = df.loc[df['Filename'] == filename]
+        embeddings = []
+        for sentence in file_df['Sentence']:
+            embedding = get_embedding(sentence, engine='text-embedding-ada-002')
+            embeddings.append(embedding)
+        file_df['embedding'] = embeddings
+        save_embeddings(file_df, f"{filename}_embeddings.pkl")
 
-def load_embeddings():
-    df = pd.read_pickle('embeddings.pkl')
+def load_embeddings(filename):
+    df = pd.read_pickle(filename)
     return df
 
-def save_embeddings(df):
-    df.to_pickle('embeddings.pkl')
+def save_embeddings(df, filename):
+    df.to_pickle(filename)
 
 @app.route('/')
 def index():
@@ -65,19 +69,27 @@ def search():
     if request.method == 'POST':
         query = request.form['query']
         files = request.files.getlist('files')
-        df = pd.DataFrame(columns=['Sentence'])
+        df = pd.DataFrame(columns=['Sentence', 'Filename'])
 
         for file in files:
-            text = extract_text(file)
+            file_text = extract_text(file)
+            text = file_text["text"]
+            filename = file_text["filename"]
             file_df = document_to_dataframe(text)
+            file_df['Filename'] = filename
             df = pd.concat([df, file_df], ignore_index=True)
 
-        # Check if embeddings are already computed and stored
-        if os.path.exists('embeddings.pkl'):
-            df = load_embeddings()
-        else:
-            compute_embeddings(df)
-            save_embeddings(df)
+        filenames = df['Filename'].unique()
+
+        for filename in filenames:
+            file_df = df.loc[df['Filename'] == filename]
+            if os.path.exists(f"{filename}_embeddings.pkl"):
+                file_df = load_embeddings(f"{filename}_embeddings.pkl")
+            else:
+                compute_embeddings(file_df, [filename])
+
+        # Combine all embeddings
+        df = pd.concat([load_embeddings(f"{filename}_embeddings.pkl") for filename in filenames])
 
         df['embedding'] = df['embedding'].apply(lambda x: np.array(x))  # Convert embeddings to NumPy arrays
 
