@@ -20,9 +20,8 @@
     <img src="{{ url_for('static', filename='FNMAL.D.png') }}" alt="Logo" class="logo">
     <h1 class="title">Semantic Search</h1>
     <div class="search-container">
-        <form action="/search" method="POST" enctype="multipart/form-data">
-            <input type="text" name="query" placeholder="Enter your search query">
-            <input type="file" name="files">
+        <form action="/search" method="POST">
+            <input type="text" id="query" name="query" placeholder="Enter your search query" required>
             <button class="custom-button" type="submit">Search</button>
         </form>
     </div>
