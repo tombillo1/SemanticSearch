@@ -1,27 +1,21 @@
+# python -m spacy download en_core_web_md
 from flask import Flask, render_template, request
-import openai
 import pandas as pd
 import nltk
 nltk.download('punkt')
-from config import API_KEY
 from nltk.tokenize import sent_tokenize
-from openai.embeddings_utils import get_embedding
+import spacy
 import faiss
 import numpy as np
-from config import API_KEY
-import requests
 
-# Set your Confluence page ID and API key here
-CONFLUENCE_PAGE_ID = "YOUR_CONFLUENCE_PAGE_ID"
-CONFLUENCE_API_KEY = "YOUR_CONFLUENCE_API_KEY"
-
-openai.api_key = API_KEY
+# Load the pre-trained spaCy model with GloVe embeddings
+nlp = spacy.load('en_core_web_md')
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 
 def extract_text(page_id, api_key):
     # Confluence API endpoint to fetch the content of a specific page
-    api_url = f"https://your-confluence-domain/wiki/rest/api/content/{page_id}?expand=body.storage,children.page"
+    api_url = f"https://tempthing.atlassian.net/wiki/rest/api/content/{page_id}?expand=body.storage"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -34,16 +28,9 @@ def extract_text(page_id, api_key):
     if response.status_code == 200:
         # Extract the content from the response JSON
         content = response.json().get("body", {}).get("storage", {}).get("value", "")
-
-        # Recursively fetch content from sub-pages
-        children = response.json().get("children", {}).get("page", [])
-        for child in children:
-            child_id = child.get("id")
-            child_content = extract_text(child_id, api_key)
-            content += " " + child_content
-
         return content
     else:
+        print("Error fetching content from Confluence API. Status code:", response.status_code)
         return None
 
 def document_to_dataframe(document):
@@ -52,8 +39,12 @@ def document_to_dataframe(document):
     df = pd.DataFrame(sentences, columns=['Sentence'])
     return df
 
+def sentence_to_embedding(sentence):
+    doc = nlp(sentence)
+    return doc.vector
+
 def initialize_faiss_index(df):
-    d = df['embedding'][0].shape[1]  # Get the dimension of the embeddings
+    d = df['embedding'][0].shape[0]  # Get the dimension of the embeddings
     index = faiss.IndexFlatL2(d)
 
     embeddings = np.vstack(df['embedding'].to_numpy())
@@ -67,6 +58,11 @@ def load_faiss_index():
     index = faiss.read_index("faiss_index.index")
     return index
 
+# Extract the Confluence page ID from the given URL
+def extract_page_id(confluence_page_url):
+    page_id = confluence_page_url.split("/")[-1]
+    return page_id
+
 @app.route('/')
 def index():
     results = ["Result 1", "Result 2", "Result 3"]
@@ -77,14 +73,17 @@ def search():
     if request.method == 'POST':
         query = request.form['query']
 
-        # Fetch the content from Confluence using the stored page ID and API key
-        content = extract_text(CONFLUENCE_PAGE_ID, CONFLUENCE_API_KEY)
+        # Extract the Confluence page ID from the provided URL
+        confluence_page_url = "https://tempthing.atlassian.net/wiki/spaces/~71202061d5761c38f44d29a548bf3719b442a6/pages/458753/Test"
+        confluence_page_id = extract_page_id(confluence_page_url)
+
+        # Fetch the content from Confluence using the extracted page ID and API key
+        content = extract_text(confluence_page_id, CONFLUENCE_API_KEY)
 
         if content:
             df = document_to_dataframe(content)
 
-            df['embedding'] = df['Sentence'].apply(lambda x: np.array(get_embedding(x, engine='text-embedding-ada-002')))
-            df['embedding'] = df['embedding'].apply(lambda x: x.reshape(1, -1))
+            df['embedding'] = df['Sentence'].apply(sentence_to_embedding)
 
             # Initialize and save the Faiss index during application startup
             initialize_faiss_index(df)
@@ -92,10 +91,8 @@ def search():
             # Load the Faiss index from the file
             index = load_faiss_index()
 
-            query_embedding = get_embedding(query, engine='text-embedding-ada-002')
-            query_embedding = np.array(query_embedding).reshape(1, -1)
-
-            _, indices = index.search(query_embedding, k=5) # Returns 5 closest results
+            query_embedding = sentence_to_embedding(query)
+            _, indices = index.search(np.array([query_embedding]), k=5)  # Returns 5 closest results
             top_items = df.iloc[indices[0]]
             results = top_items['Sentence'].tolist()
         else:
@@ -105,4 +102,6 @@ def search():
     return render_template('index.html')
 
 if __name__ == '__main__':
+    # Set your Confluence API key here
+    CONFLUENCE_API_KEY = "ATATT3xFfGF07lbt3Zk6_6p7B2MZFLgJZsRO5_0DlVOV6ecn2xy2Cv4Wg-8PfiQOwP6ouAcKL-_aW5vQtfEGJDq8VXKCPP-hEESmCGxutKkL8F_eFuUvBuhYevND8OTB0-eDr5eo1eve0Ho3bCYgYlJUMCi4g28pYCJbF9jlhg7bDLIfqCttdvU=6D0AC283"
     app.run(debug=True)
